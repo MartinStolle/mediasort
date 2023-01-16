@@ -1,0 +1,172 @@
+use clap::Parser;
+use lazy_static::lazy_static;
+use regex::Regex;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::{env, error::Error, fs};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// the name of the directory to parse
+    #[arg(short, long)]
+    folder: String,
+
+    /// Should the directory be parsed recursively
+    #[arg(short, long, default_value_t = true)]
+    recursive: bool,
+}
+
+#[derive(Debug)]
+pub struct MediaConfig {
+    pub source: String,
+    pub target: PathBuf,
+    files: HashMap<String, String>,
+}
+
+impl MediaConfig {
+    pub fn new(source: String, target: PathBuf) -> Self {
+        Self {
+            source,
+            target,
+            files: HashMap::new(),
+        }
+    }
+
+    pub fn copy_media_files(&mut self) -> Result<(), Box<dyn Error>> {
+        self.find_all_media_files(None, true)?;
+        for (source, target) in self.files.iter() {
+            copy_file(source, target)?;
+        }
+        Ok(())
+    }
+
+    fn find_all_media_files(
+        &mut self,
+        path: Option<&str>,
+        recursive: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        let path = path.unwrap_or(&self.source);
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() && recursive {
+                self.find_all_media_files(Some(path.to_str().unwrap()), true)?;
+            } else if path.is_file() {
+                let sourcepath = &path.to_str().unwrap();
+                if let Some(targetpath) = smartphone_file(sourcepath) {
+                    self.files
+                        .insert(sourcepath.to_string(), targetpath.to_owned());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    let home = env::var("HOME")?;
+    let target = Path::new(&home).join("Pictures");
+    MediaConfig::new(args.folder, target).copy_media_files()?;
+    Ok(())
+}
+
+// Copy file from one directory to another
+fn copy_file(from: &str, to: &str) -> Result<(), Box<dyn Error>> {
+    let abs_path = Path::new(&to);
+    let parent = abs_path.parent().unwrap();
+    create_dir(parent.to_str().unwrap())?;
+    println!("Copy file {} to {}", from, abs_path.to_str().unwrap());
+    fs::copy(from, to)?;
+    Ok(())
+}
+
+// Create directory, if it does not exist
+fn create_dir(path: &str) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
+// Read date from smartphone image or video filename
+fn smartphone_file(filename: &str) -> Option<String> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(
+            r"(?x)
+  (?:IMG|VID)_
+  (?P<y>\d{4}) # the year
+  (?P<m>\d{2}) # the month
+  (?P<d>\d{2}) # the day
+  _(\d{6}).(?:jpg|mp4)
+"
+        )
+        .unwrap();
+    };
+
+    RE.captures(filename).and_then(|cap| {
+        Some(format!(
+            "{}/{}/{}/{}",
+            &cap["y"], &cap["m"], &cap["d"], &cap[0]
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn read_no_smartphone_image() {
+        let filename = "no_match.jpg";
+        assert_eq!(None, smartphone_file(filename));
+    }
+    #[test]
+    fn read_smartphone_video() {
+        let filename = "VID_20221220_170102.jpg";
+        assert_eq!(
+            Some(String::from(format!("2022/12/20/{filename}"))),
+            smartphone_file(filename)
+        );
+    }
+    #[test]
+    fn read_smartphone_image() {
+        let filename = "IMG_20230115_102911.jpg";
+        assert_eq!(
+            Some(String::from(format!("2023/01/15/{filename}"))),
+            smartphone_file(filename)
+        );
+    }
+
+    #[test]
+    fn find_all_media_files_recursive() {
+        let tmpdir = TempDir::new().unwrap();
+        let test_images = tmpdir.path().join("test_images");
+        //let target_images = tmpdir.path().join("target_images");
+        create_dir(test_images.to_str().unwrap()).unwrap();
+        let test_media_files = [
+            "IMG_20210130_000001.jpg",
+            "IMG_20210130_000002.jpg",
+            "VID_20210130_000003.mp4",
+        ];
+        for file in test_media_files.iter() {
+            fs::File::create(test_images.join(file)).expect("Just create the test files");
+        }
+
+        let mut mediaconfig = MediaConfig::new(
+            test_images.to_str().unwrap().to_string(),
+            tmpdir.path().join("target_images"),
+        );
+        mediaconfig
+            .find_all_media_files(Some(tmpdir.path().to_str().unwrap()), true)
+            .expect("Everything works as intended");
+        assert_eq!(test_media_files.len(), mediaconfig.files.len());
+
+        let targets: Vec<String> = mediaconfig.files.into_values().collect();
+        for file in test_media_files.iter() {
+            assert!(targets.contains(&String::from(format!("2021/01/30/{file}"))));
+        }
+
+        tmpdir.close().expect("Remove test directory");
+    }
+}
