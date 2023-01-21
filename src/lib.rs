@@ -1,5 +1,5 @@
 use clap::Parser;
-use exif::{Tag, In};
+use exif::{In, Tag};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
@@ -117,9 +117,8 @@ fn smartphone_file(filename: &str) -> Option<String> {
 
 fn read_jpg_exif(filename: &str) -> Option<String> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(
-            r"(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\s+(?:\d|:){8}")
-        .unwrap();
+        static ref RE: Regex =
+            Regex::new(r"(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\s+(?:\d|:){8}").unwrap();
     };
     let file = File::open(filename).expect(format!("Could not open file {}", filename).as_str());
     let mut bufreader = std::io::BufReader::new(&file);
@@ -128,18 +127,25 @@ fn read_jpg_exif(filename: &str) -> Option<String> {
     let datetime = match exif.get_field(Tag::DateTimeOriginal, In::PRIMARY) {
         Some(field) => {
             println!("{}: {}", field.tag, field.display_value());
-                RE.captures(field.display_value().to_string().as_str()).and_then(|cap| {
+            RE.captures(field.display_value().to_string().as_str())
+                .and_then(|cap| {
                     Some(format!(
                         "{}/{}/{}/{}",
-                        &cap["y"], &cap["m"], &cap["d"], Path::new(filename).file_name().expect("no filename").to_str().unwrap()
+                        &cap["y"],
+                        &cap["m"],
+                        &cap["d"],
+                        Path::new(filename)
+                            .file_name()
+                            .expect("no filename")
+                            .to_str()
+                            .unwrap()
                     ))
                 })
-        },
+        }
         _ => Some(String::from("no exif data")),
     };
     datetime
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -147,9 +153,11 @@ mod tests {
 
     use super::*;
 
-    macro_rules! test_case {($fname:expr) => (
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", $fname)
-      )}
+    macro_rules! test_case {
+        ($fname:expr) => {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", $fname)
+        };
+    }
 
     #[test]
     fn test_read_jpg_exif() {
