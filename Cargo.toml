@@ -10,3 +10,4 @@ regex = "*"
 lazy_static = "*"
 clap = { version = "4.0", features = ["derive"] }
 tempfile = "*"
+kamadak-exif = "0.5.5"

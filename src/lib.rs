@@ -1,7 +1,9 @@
 use clap::Parser;
+use exif::{Tag, In};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::{env, error::Error, fs};
 
@@ -57,6 +59,9 @@ impl MediaConfig {
                 if let Some(targetpath) = smartphone_file(sourcepath) {
                     self.files
                         .insert(sourcepath.to_string(), targetpath.to_owned());
+                } else if let Some(targetpath) = read_jpg_exif(sourcepath) {
+                    self.files
+                        .insert(sourcepath.to_string(), targetpath.to_owned());
                 }
             }
         }
@@ -110,11 +115,50 @@ fn smartphone_file(filename: &str) -> Option<String> {
     })
 }
 
+fn read_jpg_exif(filename: &str) -> Option<String> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(
+            r"(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})\s+(?:\d|:){8}")
+        .unwrap();
+    };
+    let file = File::open(filename).expect(format!("Could not open file {}", filename).as_str());
+    let mut bufreader = std::io::BufReader::new(&file);
+    let exifreader = exif::Reader::new();
+    let exif = exifreader.read_from_container(&mut bufreader).unwrap();
+    let datetime = match exif.get_field(Tag::DateTimeOriginal, In::PRIMARY) {
+        Some(field) => {
+            println!("{}: {}", field.tag, field.display_value());
+                RE.captures(field.display_value().to_string().as_str()).and_then(|cap| {
+                    Some(format!(
+                        "{}/{}/{}/{}",
+                        &cap["y"], &cap["m"], &cap["d"], Path::new(filename).file_name().expect("no filename").to_str().unwrap()
+                    ))
+                })
+        },
+        _ => Some(String::from("no exif data")),
+    };
+    datetime
+}
+
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    macro_rules! test_case {($fname:expr) => (
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", $fname)
+      )}
+
+    #[test]
+    fn test_read_jpg_exif() {
+        let filename = test_case!("test_image.JPG");
+        assert_eq!(
+            Some(String::from(format!("2022/12/17/test_image.JPG"))),
+            read_jpg_exif(filename)
+        );
+    }
 
     #[test]
     fn read_no_smartphone_image() {
